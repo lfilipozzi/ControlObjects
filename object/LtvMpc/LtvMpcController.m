@@ -36,7 +36,7 @@ properties(Access = private)
     % Cost function matrices
     cost = struct('Qe',1,'Rd',1,'Ru',0);
     % Continuous state-space matrices
-    plant = struct('A',1,'B',1,'C',1,'D',1,'yop',1,'Ts',0);
+    plant = struct('A',1,'B',1,'C',1,'D',1,'xop',1,'yop',1,'Ts',0);
     % Control input at the last timestep
     uPrev = 0;
     % Measured disturbance
@@ -92,12 +92,13 @@ methods(Access = public)
         obj.yRef = y;
     end
     
-    function setPlantModel(obj,A,B,C,D,yop)
+    function setPlantModel(obj,A,B,C,D,xop,yop)
         % Set the continuous state-space model
         obj.plant.A   = A;
         obj.plant.B   = B;
         obj.plant.C   = C;
         obj.plant.D   = D;
+        obj.plant.xop = xop;
         obj.plant.yop = yop;
     end
     
@@ -154,27 +155,25 @@ methods(Access = public)
         obj.qpSolver.setup();
     end
     
-    function [u_seq_opt, cost, exitflag, slack] = step(obj)
+    function [u_seq, x_seq, y_seq, cost, exitflag, slack] = step(obj)
         % Run one optmization of the MPC controller. Return the optimal
         % control sequence, its cost, the exitflag of the optmization, and
         % the value of the slack variables associated to soft constraints.
         
         % Solve MPC problem using batch approach
-        [H,f,A,b,lb,ub] = obj.toQp();
-        [du_opt,cost,exitflag] = obj.qpSolver.solve(H,f,A,b,lb,ub);
-        if isempty(du_opt); error('Solver failed! No solution.'); end
-        du_opt = obj.unScale(du_opt);
-        
-        % Separate the slack variables from the control inputs
-        Ns = obj.getNumberSlackVar();
-        Np_MPC = obj.Np;
-        slack  = du_opt(end-Ns*Np_MPC+1:end);
-        du_opt = du_opt(1:end-Ns*Np_MPC);
-        du_opt = reshape(du_opt, [obj.Nu+obj.Nw obj.Nt]);
+        [du_opt,dx_opt,slack,cost,exitflag] = obj.batchApproach();
         
         % Return the control input
-        u_seq_opt = obj.uPrev + du_opt(1:obj.Nu,:);
-        u_opt     = u_seq_opt(1:obj.Nu,1);
+        u_seq = obj.uPrev + du_opt(1:obj.Nu,:);
+        u_opt = u_seq(1:obj.Nu,1);
+        
+        % Return the predicted state sequence
+        x_seq = obj.plant.xop + dx_opt;
+        
+        % Return the predicted output sequence
+        y_seq = obj.plant.yop + ...
+            obj.plant.C*dx_opt + ...
+            obj.plant.D*[du_opt zeros(obj.Nu+obj.Nw,obj.Np-obj.Nt)];
         
         % Save the current control inputs for next timestep
         obj.uPrev = u_opt;
@@ -193,7 +192,9 @@ methods(Access = public)
 end
 
 methods (Access = private)
-    function [HBatch,fBatch,ABatch,bBatch,lbBatch,ubBatch] = toQp(obj)
+    function [du_opt,dx_opt,slack,cost,exitflag] = batchApproach(obj)
+        % Solve the MPC problem using the batch approach
+        
         % Define linearization point as the current states and the 
         % previous control inputs
         uop = [obj.uPrev; obj.wMeas];
@@ -428,6 +429,29 @@ methods (Access = private)
         
         % Make sure H is symmetric
         HBatch = (HBatch+HBatch') / 2;
+        
+        % Solve the QP problem
+        [du_opt,cost,exitflag] = obj.qpSolver.solve(...
+                HBatch,fBatch,ABatch,bBatch,lbBatch,ubBatch...
+            );
+        
+        % Unscale 
+        if isempty(du_opt)
+            error('Solver failed! No solution.'); 
+        end
+        du_opt = obj.unScale(du_opt);
+        
+        % Separate the slack variables from the control inputs
+        slack  = du_opt(end-Ns*Np_MPC+1:end);
+        du_opt = du_opt(1:Nu_MPC*Nt_MPC);
+        
+        % Compute optimal states
+        dx_opt = Su * du_opt;
+        
+        % Reshape
+        slack  = reshape(slack,  [Ns Np_MPC]);
+        du_opt = reshape(du_opt, [Nu_MPC Nt_MPC]);
+        dx_opt = reshape(dx_opt, [Nx_MPC Np_MPC]);
     end
 
     function du = unScale(obj,du)

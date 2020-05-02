@@ -66,6 +66,10 @@ properties(Nontunable,Logical)
     showSolveTime = false;
     % Show optimal control sequence
     showControlSequence = false;
+    % Show predicted state sequence
+    showStateSequence = false;
+    % Show predicted output sequence
+    showOutputSequence = false;
     % Show slack variable
     showSlackVariable = false;
     % Measured disturbance
@@ -231,12 +235,12 @@ methods(Access = protected)
         obj.mpcController.setCostFunction(Qe,Rd,Ru);
         obj.mpcController.setMeasuredDisturbance(wMeas);
         obj.mpcController.setReferenceTarget(ref);
-        obj.mpcController.setPlantModel(A,B,C,D,yop);
+        obj.mpcController.setPlantModel(A,B,C,D,xop,yop);
         obj.mpcController.setConstraints(Ax,Au,bop,b);
         obj.mpcController.setActuatorBounds(umin,umax);
 
         % Solve MPC problem using batch approach
-        [sequence, cost, exitflag, slack] = obj.mpcController.step();
+        [u_seq, x_seq, y_seq, cost, exitflag, slack] = obj.mpcController.step();
 
         % Warning if the problem has not been solved
         errMessage = obj.qpSolver.getWarningMessage(exitflag);
@@ -247,7 +251,7 @@ methods(Access = protected)
         end
 
         % Extract first control input
-        u = sequence(1:obj.Nu,1);
+        u = u_seq(1:obj.Nu,1);
 
         % Record time to solve
         if obj.showSolveTime
@@ -255,20 +259,34 @@ methods(Access = protected)
         end
 
         % Returns output: [u, solveTime, cost, exitflag]
+        num = 1;
         varargout{1} = u;
         if obj.showSolveTime
-            varargout = [varargout{:}, {solveTime}];
+            num = num + 1;
+            varargout{num} = solveTime;
         end
         if obj.showCost
-            varargout = [varargout{:}, {cost}];
+            num = num + 1;
+            varargout{num} = cost;
         end
         if obj.showControlSequence
-            varargout = [varargout{:}, {sequence}];
+            num = num + 1;
+            varargout{num} = u_seq;
         end
-        varargout = [varargout{:}, {exitflag}];
+        if obj.showStateSequence
+            num = num + 1;
+            varargout{num} = x_seq;
+        end
+        if obj.showOutputSequence
+            num = num + 1;
+            varargout{num} = y_seq;
+        end
+        num = num + 1;
+        varargout{num} = exitflag;
         if obj.hasIneqConstraints && obj.hasSoftConstraints && ...
                 obj.showSlackVariable
-            varargout = [varargout{:}, {slack}];
+            num = num + 1;
+            varargout{num} = slack;
         end
     end
 
@@ -337,6 +355,12 @@ methods(Access = protected)
         if obj.showControlSequence
             num = num + 1;
         end
+        if obj.showStateSequence
+            num = num + 1;
+        end
+        if obj.showOutputSequence
+            num = num + 1;
+        end
         if obj.hasIneqConstraints && obj.hasSoftConstraints && ...
                 obj.showSlackVariable
             num = num + 1;
@@ -345,41 +369,61 @@ methods(Access = protected)
     
     function varargout = getInputNamesImpl(obj)
         % Non-optional inputs
-        varargout{1} = 'reference';
-        varargout{2} = 'state';
+        num = 1;
+        varargout{num} = 'reference';
+        num = num + 1;
+        varargout{num} = 'state';
         % Optional inputs
         if obj.hasEstimatedSignals
-            varargout = [varargout{:}, {'estim. signals'}];
+            num = num + 1;
+            varargout{num} = 'estim. signals';
         end
         if obj.hasMeasuredDisturbance
-            varargout = [varargout{:}, {'meas. dist.'}];
+            num = num + 1;
+            varargout{num} = 'meas. dist.';
         end
         if obj.hasActuatorBounds
-            varargout = [varargout{:}, {'min. actuator',...
-                'max. actuator'}];
+            num = num + 2;
+            varargout{num-1} = 'min. actuator';
+            varargout{num}   = 'max. actuator';
         end
         if obj.hasIneqConstraints
-            varargout = [varargout{:}, {'ineq. bounds'}];
+            num = num + 1;
+            varargout{num}= 'ineq. bounds';
         end
     end
     
     function varargout = getOutputNamesImpl(obj)
         % Non-optional outputs
-        varargout{1} = 'control';
+        num = 1;
+        varargout{num} = 'control';
         % Optional outputs
         if obj.showSolveTime
-            varargout = [varargout{:}, {'time'}];
+            num = num + 1;
+            varargout{num} = 'time';
         end
         if obj.showCost
-            varargout = [varargout{:}, {'cost'}];
+            num = num + 1;
+            varargout{num} = 'cost';
         end
         if obj.showControlSequence
-            varargout = [varargout{:}, {'sequence'}];
+            num = num + 1;
+            varargout{num} = 'controls seq.';
         end
-        varargout = [varargout{:}, {'exitflag'}];
+        if obj.showStateSequence
+            num = num + 1;
+            varargout{num} = 'pred. states';
+        end
+        if obj.showOutputSequence
+            num = num + 1;
+            varargout{num} = 'pred. outputs';
+        end
+        num = num + 1;
+        varargout{num} = 'exitflag';
         if obj.hasIneqConstraints && obj.hasSoftConstraints && ...
                 obj.showSlackVariable
-            varargout = [varargout{:}, {'slack var.'}];
+            num = num + 1;
+            varargout{num} = 'slack var.';
         end
     end
     
@@ -397,119 +441,191 @@ methods(Access = protected)
         % Define if the output size if fixed
 
         % u_output
-        varargout{1} = true;
+        num = 1;
+        varargout{num} = true;
 
         % solving time
         if obj.showSolveTime
-            varargout = [varargout{:}, {true}];
+            num = num + 1;
+            varargout{num} = true;
         end
 
         % optimal cost
         if obj.showCost
-            varargout = [varargout{:}, {true}];
+            num = num + 1;
+            varargout{num} = true;
         end
 
         % control sequence
         if obj.showControlSequence
-            varargout = [varargout{:}, {true}];
+            num = num + 1;
+            varargout{num} = true;
+        end
+        
+        % predicted state sequence
+        if obj.showStateSequence
+            num = num + 1;
+            varargout{num} = true;
+        end
+        
+        % predicted output sequence
+        if obj.showOutputSequence
+            num = num + 1;
+            varargout{num} = true;
         end
 
         % exitflag
-        varargout = [varargout{:}, {true}];
+        num = num + 1;
+        varargout{num} = true;
 
         % slack variable
         if obj.hasIneqConstraints && obj.hasSoftConstraints && ...
                 obj.showSlackVariable
-            varargout = [varargout{:}, {true}];
+            num = num + 1;
+            varargout{num} = true;
         end
     end
 
     function varargout = getOutputSizeImpl(obj)
         % Return size for each output port
 
-        varargout{1} = [obj.Nu 1];
+        % control
+        num = 1;
+        varargout{num} = [obj.Nu 1];
 
         % solving time
         if obj.showSolveTime
-            varargout = [varargout{:}, {[1 1]}];
+            num = num + 1;
+            varargout{num} = [1 1];
         end
 
         % optimal cost
         if obj.showCost
-            varargout = [varargout{:}, {[1 1]}];
+            num = num + 1;
+            varargout{num} = [1 1];
         end
 
         % control sequence
         if obj.showControlSequence
-            varargout = [varargout{:}, {[obj.Nu obj.Nt]}];
+            num = num + 1;
+            varargout{num} = [obj.Nu obj.Nt];
+        end
+        
+        % predicted state sequence
+        if obj.showStateSequence
+            num = num + 1;
+            varargout{num} = [obj.Nx obj.Np];
+        end
+        
+        % predicted output sequence
+        if obj.showOutputSequence
+            num = num + 1;
+            varargout{num} = [obj.Nr obj.Np];
         end
 
         % exitflag
-        varargout = [varargout{:}, {[1 1]}];
+        num = num + 1;
+        varargout{num} = [1 1];
 
         % slack variables
         if obj.hasIneqConstraints && obj.hasSoftConstraints && ...
                 obj.showSlackVariable
-            varargout = [varargout{:}, ...
-                {[numel(obj.softConstraintsIndex)*obj.Np 1]}];
+            num = num + 1;
+            varargout{num} = [numel(obj.softConstraintsIndex) obj.Np];
         end
     end
 
     function varargout = getOutputDataTypeImpl(obj)
         % u_output
-        varargout{1} = 'double';
+        num = 1;
+        varargout{num} = 'double';
 
         % solving time
         if obj.showSolveTime
-            varargout = [varargout{:}, {'double'}];
+            num = num + 1;
+            varargout{num} = 'double';
         end
 
         % optimal cost
         if obj.showCost
-            varargout = [varargout{:}, {'double'}];
+            num = num + 1;
+            varargout{num} = 'double';
         end
 
         % control sequence
         if obj.showControlSequence
-            varargout = [varargout{:}, {'double'}];
+            num = num + 1;
+            varargout{num} = 'double';
+        end
+        
+        % predicted state sequence
+        if obj.showStateSequence
+            num = num + 1;
+            varargout{num} = 'double';
+        end
+        
+        % predicted output sequence
+        if obj.showOutputSequence
+            num = num + 1;
+            varargout{num} = 'double';
         end
 
         % exitflag
-        varargout = [varargout{:}, {'double'}];
+        num = num + 1;
+        varargout{num} = 'double';
 
         % slack variables
         if obj.hasIneqConstraints && obj.hasSoftConstraints && ...
                 obj.showSlackVariable
-            varargout = [varargout{:}, {'double'}];
+            num = num + 1;
+            varargout{num} = 'double';
         end
     end
 
     function varargout = isOutputComplexImpl(obj)
         % u_output
-        varargout{1} = false;
+        num = 1;
+        varargout{num} = false;
 
         % solving time
         if obj.showSolveTime
-            varargout = [varargout{:}, {false}];
+            num =  num + 1;
+            varargout{num} = false;
         end
 
         % optimal cost
         if obj.showCost
-            varargout = [varargout{:}, {false}];
+            num = num + 1;
+            varargout{num} = false;
         end
 
         % control sequence
         if obj.showControlSequence
-            varargout = [varargout{:}, {false}];
+            num = num + 1;
+            varargout{num} = false;
+        end
+        
+        % predicted state sequence
+        if obj.showStateSequence
+            num = num + 1;
+            varargout{num} = false;
+        end
+        
+        % predicted output sequence
+        if obj.showOutputSequence
+            num = num + 1;
+            varargout{num} = false;
         end
 
         % exitflag
-        varargout = [varargout{:}, {false}];
+        num = num + 1;
+        varargout{num} = false;
 
         % slack variable
         if obj.hasIneqConstraints && obj.hasSoftConstraints && ...
                 obj.showSlackVariable
-            varargout = [varargout{:}, {false}];
+            num = num + 1;
+            varargout{num} = false;
         end
     end
     
@@ -542,7 +658,7 @@ methods(Access = protected)
     function icon = getIconImpl(~)
         icon = {'Linear Time','Varying','MPC'};
     end
-end
+end 
     
 methods (Static, Access = protected)
     function simMode = getSimulateUsingImpl
@@ -642,7 +758,8 @@ methods (Static, Access = protected)
         additionalOutportsSection = matlab.system.display.Section(...
             'Title','Additional Outports', ...
             'PropertyList',{'showCost','showSolveTime',...
-            'showControlSequence','showSlackVariable'});
+            'showControlSequence','showStateSequence',...
+            'showOutputSequence','showSlackVariable'});
 
         % Create tab for general configuration
         generalGroup = matlab.system.display.SectionGroup(...
