@@ -50,7 +50,7 @@ properties(Access = private)
     % Scale factors
     scaling = struct('input',[],'slack',[],'factors',[]);
     % Input bounds
-    bounds = struct('lb',[],'ub',[]);
+    bounds = struct('lb',[],'ub',[],'dlb',[],'dub',[]);
     % QP solver
     qpSolver IQpSolver = QuadprogSolver();
 end
@@ -133,6 +133,13 @@ methods(Access = public)
         else
             obj.bounds.ub = inf(obj.Nu,1);
         end
+    end
+    
+    function setActuatorRateBounds(obj,dlb,dub)
+        % Set the actuator rate bounds. Empty matrices means no slew rate
+        % constraints.
+        obj.bounds.dlb = dlb;
+        obj.bounds.dub = dub;
     end
     
     function setSoftConstraints(obj,index,weight)
@@ -371,6 +378,52 @@ methods (Access = private)
                 bBatch((k-1)*Nineq+1:k*Nineq) = ...
                     b;
             end
+        end
+        
+        % +-------------------------+
+        % | Actuator  rate  limits  |
+        % +-------------------------+
+        % Actuator slew rate constraints are treated as polypotic
+        % constraints.
+        % [ I  0  0  0  0]   [ du0  ]    [dmax]
+        % [-I  I  0  0  0]   [ du1  ]    [dmax]
+        % [ 0 -I  I  0  0] * [ du2  ] <= [dmax]
+        % [ 0  0 -I  I  0]   [ ...  ]    [dmax]
+        % [ 0  0  0 -I  I]   [duNt-1]    [dmax]
+        % and 
+        % [-I  0  0  0  0]   [ du0  ]    [-dmin]
+        % [ I -I  0  0  0]   [ du1  ]    [-dmin]
+        % [ 0  I -I  0  0] * [ du2  ] <= [-dmin]
+        % [ 0  0  I -I  0]   [ ...  ]    [-dmin]
+        % [ 0  0  0  I -I]   [duNt-1]    [-dmin]
+        if ~isempty(obj.bounds.dlb) && ~isempty(obj.bounds.dub)
+            ARate = [...
+                eye(Nu_MPC*Nt_MPC) - ...
+                  [zeros(Nu_MPC,Nu_MPC*Nt_MPC); 
+                   eye(Nu_MPC*(Nt_MPC-1)) zeros(Nu_MPC*(Nt_MPC-1),Nu_MPC)];
+               -eye(Nu_MPC*Nt_MPC) + ...
+                  [zeros(Nu_MPC,Nu_MPC*Nt_MPC); 
+                   eye(Nu_MPC*(Nt_MPC-1)) zeros(Nu_MPC*(Nt_MPC-1),Nu_MPC)];
+            ];
+            bRate = zeros(2*Nu_MPC*Nt_MPC,1);
+            for k = 0:Nt_MPC-1
+                bRate(k*Nu_MPC+(1:Nu_MPC)) = ...
+                    [...
+                    obj.bounds.dub;
+                    inf(obj.Nw,1);
+                    ];
+            end
+            for k = Nt_MPC+(0:Nt_MPC-1)
+                bRate(k*Nu_MPC+(1:Nu_MPC)) = ...
+                    -[...
+                    obj.bounds.dlb;
+                    -inf(obj.Nw,1);
+                    ];
+            end
+
+            % Add the slew rate constraints to the polytopic constraints
+            ABatch = [ABatch; ARate];
+            bBatch = [bBatch; bRate];
         end
 
         % +-----------------------------------+

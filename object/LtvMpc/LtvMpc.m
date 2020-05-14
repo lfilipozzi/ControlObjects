@@ -78,6 +78,8 @@ properties(Nontunable,Logical)
     hasIneqConstraints = false;
     % Actuator bounds
     hasActuatorBounds = false;
+    % Slew rate actuator bounds
+    hasSlewRateActuatorBounds = false;
     % Estimated signals
     hasEstimatedSignals = false;
     % Soft inequality constraints
@@ -211,6 +213,14 @@ methods(Access = protected)
             umin = [];
             umax = [];
         end
+        if obj.hasSlewRateActuatorBounds
+            num = num + 2;
+            dumin = varargin{num - 1};
+            dumax = varargin{num};
+        else
+            dumin = [];
+            dumax = [];
+        end
         if obj.hasIneqConstraints
             num = num + 1;
             b = varargin{num};
@@ -238,6 +248,7 @@ methods(Access = protected)
         obj.mpcController.setPlantModel(A,B,C,D,xop,yop);
         obj.mpcController.setConstraints(Ax,Au,bop,b);
         obj.mpcController.setActuatorBounds(umin,umax);
+        obj.mpcController.setActuatorRateBounds(dumin,dumax);
 
         % Solve MPC problem using batch approach
         [u_seq, x_seq, y_seq, cost, exitflag, slack] = obj.mpcController.step();
@@ -319,32 +330,31 @@ methods(Access = protected)
         sts = createSampleTime(obj,'Type','Discrete',...
           'SampleTime',obj.Ts,'OffsetTime',0);
     end
-
-    % Indicate number of input ports of the system object
+    
     function num = getNumInputsImpl(obj)
-        % Two inputs minimum for state feedback and reference signal
+        % Indicate number of input ports of the system object
+        
         num = 2;
         if obj.hasEstimatedSignals
-            % Add inport for estimated signals
             num = num + 1;
         end
         if obj.hasMeasuredDisturbance
-            % Add inport for measured disturbance
             num = num + 1;
         end
         if obj.hasActuatorBounds
-            % Add two signals for max and min actuator bounds
+            num = num + 2;
+        end
+        if obj.hasSlewRateActuatorBounds
             num = num + 2;
         end
         if obj.hasIneqConstraints
-            % Add one input for ineqaulity bounds
             num = num + 1;
         end
     end
-
-    % Indicate the number of output ports of the system object
+    
     function num = getNumOutputsImpl(obj)
-        % Two outputs minimum for the control input and QP exitflag
+        % Indicate the number of output ports of the system object
+        
         num = 2;
         if obj.showCost
             num = num + 1;
@@ -368,12 +378,12 @@ methods(Access = protected)
     end
     
     function varargout = getInputNamesImpl(obj)
-        % Non-optional inputs
+        % Indicate the label of the inports
+        
         num = 1;
         varargout{num} = 'reference';
         num = num + 1;
         varargout{num} = 'state';
-        % Optional inputs
         if obj.hasEstimatedSignals
             num = num + 1;
             varargout{num} = 'estim. signals';
@@ -387,6 +397,11 @@ methods(Access = protected)
             varargout{num-1} = 'min. actuator';
             varargout{num}   = 'max. actuator';
         end
+        if obj.hasSlewRateActuatorBounds
+            num = num + 2;
+            varargout{num-1} = 'min. rate actuator';
+            varargout{num}   = 'max. rate actuator';
+        end
         if obj.hasIneqConstraints
             num = num + 1;
             varargout{num}= 'ineq. bounds';
@@ -394,10 +409,10 @@ methods(Access = protected)
     end
     
     function varargout = getOutputNamesImpl(obj)
-        % Non-optional outputs
+        % Indicate the label of the outports
+        
         num = 1;
         varargout{num} = 'control';
-        % Optional outputs
         if obj.showSolveTime
             num = num + 1;
             varargout{num} = 'time';
@@ -536,6 +551,8 @@ methods(Access = protected)
     end
 
     function varargout = getOutputDataTypeImpl(obj)
+        % Define each output data type
+        
         % u_output
         num = 1;
         varargout{num} = 'double';
@@ -583,6 +600,8 @@ methods(Access = protected)
     end
 
     function varargout = isOutputComplexImpl(obj)
+        % Define each output complexity
+        
         % u_output
         num = 1;
         varargout{num} = false;
@@ -630,6 +649,8 @@ methods(Access = protected)
     end
     
     function flag = isInactivePropertyImpl(obj,propertyName)
+        % Inactivate property if necessary
+        
         % getPolytopeMat is useful only if we have inequality 
         % constraints
         if ismember(propertyName, {'getPolytopeMat'})
@@ -705,6 +726,7 @@ methods (Static, Access = protected)
         MPCConstraints = matlab.system.display.Section(...
             'Title','Constraints',...
             'PropertyList',{'hasActuatorBounds',...
+            'hasSlewRateActuatorBounds',...
             'hasIneqConstraints','getPolytopeMat',...
             'hasSoftConstraints','softConstraintsIndex',...
             'softConstraintsWeight'});
